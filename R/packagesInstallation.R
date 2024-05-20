@@ -6,6 +6,6 @@ paket <- function(pak){
   sapply(pak, library, character.only = TRUE)
 }
 
-#listOfPackages <- c("tidyverse", "RColorBrewer", "ggplot2","dplyr", "lubridate", "data.table")
-listOfPackages <- c("tidyverse", "RColorBrewer", "ggplot2","dplyr", "lubridate", "data.table", "table1")
+listOfPackages <- c("tidyverse", "RColorBrewer", "ggplot2","dplyr", "lubridate", "data.table")
+#listOfPackages <- c("tidyverse", "RColorBrewer", "ggplot2","dplyr", "lubridate", "data.table", "table1")
 paket(listOfPackages)

@@ -219,7 +219,10 @@ toPlot_formated <- obs_disease_interest %>%
 toPlot_counts <- toPlot_formated %>%
   dplyr::mutate( pat_hosp = paste0( patient_num, "-", n_hospitalization )) %>%
   dplyr::group_by( time_p ) %>%
-  dplyr::summarise( n = n_distinct( pat_hosp ))
+  #dplyr::summarise( n = n_distinct( pat_hosp )) %>%
+  dplyr::summarise( n = ifelse(n_distinct(pat_hosp) > obfuscation | isFALSE(obfuscation),
+                               n_distinct(pat_hosp), 
+                               0.5))
 ```
 
 ## Plot cases per month
@@ -239,11 +242,73 @@ ggplot2::ggplot(data=toPlot_counts, aes(x=time_p, y=n)) +
 ```{r}
 demog_table <- toPlot_formated %>%
   dplyr::left_join( demo_raw %>% dplyr::select( patient_num, sex ), by = "patient_num" ) %>%
-  dplyr::select( patient_num, sex, age_time_diagnosis, length_hospitalization ) %>%
+  dplyr::select( patient_num, sex, age_time_diagnosis, length_hospitalization,n_hospitalization ) %>%
   unique()
 ```
 
 ```{r}
+age <- demog_table %>%
+  dplyr::mutate( age_time_diagnosis = ifelse( age_time_diagnosis == -1, 0, age_time_diagnosis )) %>%
+  dplyr::mutate( pat_hosp = paste0( patient_num, "-", n_hospitalization )) %>%
+  dplyr::summarise( mean = mean( age_time_diagnosis ),
+                    sd = sd( age_time_diagnosis ),
+                    count = n_distinct(pat_hosp)) %>%
+  dplyr::mutate( count = ifelse( count > obfuscation, count, obfuscation * 0.5))
+```
+
+```{r}
+sex <- demog_table %>%
+  dplyr::mutate( hospitalization_id = paste0( patient_num, "-", n_hospitalization )) %>%
+  dplyr::distinct(hospitalization_id, sex) %>% 
+  dplyr::group_by( sex ) %>%
+  dplyr::summarise( count = n_distinct(hospitalization_id) ) %>%
+  dplyr::mutate( count = ifelse( count > obfuscation, count, obfuscation * 0.5),
+                 total = sum( count ), percentage = round( count/total*100, 2)  )
+```
+
+```{r}
+hosp_length <- demog_table %>%
+  dplyr::mutate( pat_hosp = paste0( patient_num, "-", n_hospitalization )) %>%
+  dplyr::summarise( mean = mean( length_hospitalization ),
+                    sd = sd( length_hospitalization ),
+                    count = n_distinct(pat_hosp)) %>%
+  dplyr::mutate( count = ifelse( count > obfuscation, count, obfuscation * 0.5))
+```
+
+```{r}
+format_counts <- function(count, percentage) {
+  glue::glue("{count} ({percentage} %)", count = count, percentage = percentage)
+}
+
+age_table1 <- age %>% 
+  mutate(result = glue::glue("{mean} (sd: {sd})", mean = round(mean, 2), sd = round(sd, 2))) %>% 
+  select(result) %>% 
+  mutate(name = "Age")
+
+sex_table1 <- sex %>%
+  mutate(result = format_counts(count, percentage)) %>%
+  select(-c(count, percentage)) %>%
+  rename(name = sex)
+
+hosp_length_table1 <- hosp_length %>% 
+  mutate(result = glue::glue("{mean} (sd: {sd})", mean = round(mean, 2), sd = round(sd, 2))) %>% 
+  select(result) %>% 
+  mutate(name = "Length of Hospitalization")
+
+list_table1 <- list(
+  "Sex" = sex_table1,
+  "Age" = age_table1,
+  "Length of Hospitalization" = hosp_length_table1)
+
+
+table1 <- list_table1 %>%
+  lapply(function(df) mutate(df, across(.fns = as.character))) 
+
+table1
+```
+
+
+```{r, eval=FALSE}
 table1(~ sex + age_time_diagnosis +  length_hospitalization, 
        data = demog_table, caption = "Table 1. Kawasaki Disease Hospitalizations")
 ```
