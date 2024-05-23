@@ -1,0 +1,6 @@
+ICD10_Code,description,category
+M32,Systemic Lupus Erythematosus (SLE),AD
+M35,Sjogren Syndrome,AD
+E10,Type 1 Diabetes Mellitus,AD
+K50,Crohn's Disease,AD
+K51,Ulcerative Colitis,AD
