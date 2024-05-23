@@ -1,0 +1,334 @@
+---
+title: "Autoimmune disease: data exploration"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+# Inclusion criteria
+The *patients* inclusion criteria is **patients < 18 at the date of visit**
+The *Visits* inclusion criteria includes:
+    -   Inpatients (at least one hospitalization \> 1 day)
+    -   Comprising at least one ICD-10 code during hospitalization
+    -   Start date: January 1st, 2019
+    -   End date: March 31st, 2023
+
+# Variables that need to be checked/modified by each site
+Change the values of the following variables according to your site:
+1.  "folder_4ce_files": folder path where your phase 2.2 data files are
+    located
+2.  "obfuscation": determine the obfuscation threshold (FALSE if no
+    obfuscation, or the numeric value of the obfuscation threshold if
+    any)
+3.  "dateFormat": specify the format of the date at your site (e.g., for
+    "2021-06-24", the format would be ""%Y-%m-%d"", [see
+    documentation](https://www.stat.berkeley.edu/~s133/dates.html))
+4.  "data_update_date": date at which the data has been updated in the
+    local datawarehouse. Used to estimate patient age at time of visit,
+    since patients age in the 4CE demographic file is expected the age
+    at data update.
+
+
+```{r message=FALSE, warning=FALSE}
+folder_4ce_files <- "/4ceData/Input/4CEAllAdminChortsOct2023/"
+obfuscation =  FALSE
+#obfuscation = 3
+dateFormat <- "%Y-%m-%d"
+data_update_date <- "2023-10-01"
+age_estimation_variability <- FALSE
+```
+
+
+# Set up
+- Installing and loading the libraries
+- Get the session info 
+
+```{r libraries, message=FALSE, warning=FALSE, results='hide'}
+# Install packages
+source("../R/packagesInstallation.R")
+# get the session information
+sessionInfo()
+# load the local variables
+source("../R/setUpVariableParameters.R")
+
+print(paste0( 'FourCePhase2.2kawasai_ad Code version: ', codeVersion ))
+print('##########')
+```
+
+# Data loading
+We will use as input the 2.2 data files. Specifically:
+-   LocalPatientSummary
+-   LocalPatientObservation
+-   LocalPatientClinicalcourse
+
+## Reading 4CE phase 2.2 files
+
+```{r message=FALSE, warning=FALSE}
+### Read the CSV input files without duplicating the data
+
+source("../R/readInputFiles_fread.R")
+
+filecheck <- checkInputFilesFread( path = folder_4ce_files, separator = ",", skip = 0, verbose = TRUE )
+
+if(filecheck){
+  demo_raw <-  data.table::fread(paste0( folder_4ce_files, "LocalPatientSummary.csv"), sep = ',',skip = 0, fill=TRUE )
+  obs_raw <-  data.table::fread(paste0( folder_4ce_files, "LocalPatientObservations.csv"), sep = ',',skip = 0, fill=TRUE)
+  clinical_raw <-  data.table::fread(paste0( folder_4ce_files, "LocalPatientClinicalCourse.csv"), sep = ',',skip = 0, fill=TRUE)
+
+  ### Extract the patient summary and observation information. 
+  # arrange in a consistent way to make sure we are not assuming the order of some sites
+  # select only the study period
+  demo_raw <- demo_raw %>% 
+    dplyr::mutate( age = trunc( age ) ) %>%
+    dplyr::filter(cohort == "AllAdm", 
+                  age >= 0,
+                  as.Date(admission_date, format = dateFormat) >= ymd('2019-01-01'),
+                  as.Date(admission_date, format = dateFormat) <= ymd('2023-03-31')) %>%
+    dplyr::arrange(patient_num, as.Date(admission_date, format = dateFormat), days_since_admission)
+  obs_raw <- obs_raw %>% 
+    dplyr::filter(cohort == "AllAdm") %>%
+    dplyr::arrange(patient_num, days_since_admission)
+  clinical_raw <- clinical_raw %>% 
+    dplyr::filter(cohort == "AllAdm",
+                  as.Date(calendar_date, format = dateFormat) >= ymd('2019-01-01'),
+                  as.Date(calendar_date, format = dateFormat) <= ymd('2023-03-31')) %>%
+    dplyr::arrange(patient_num, as.Date(calendar_date, format = dateFormat), days_since_admission)
+  
+  print('Input files successfully read, patient data extracted')
+  
+}else{
+  print('Error in reading files')
+}
+
+#remove potential duplicates
+clinical_raw <- clinical_raw %>% unique()
+demo_raw <- demo_raw %>% unique()
+obs_raw <- obs_raw %>% unique()
+
+```
+
+## Select the ICD codes of interest
+```{r}
+print('Reading ICD code')
+icdCodes <- read.csv("../public-data/ICD_ad.csv", header = TRUE, colClasses = "character")
+```
+
+# Data-management
+
+## Filtering on "inpatient" status
+
+```{r}
+# Filtering on inpatients here (in_hospital == 1), to reduce subsequent compute time of the encounter length calculation 
+clinical_raw <- dplyr::filter(clinical_raw, in_hospital == 1)
+```
+
+## Calculating age at hospitalization time
+
+```{r}
+# Calculating patient age at the time of visit, assuming the age used is the patients' age at the time of extraction (last discharge date available in the data)
+# removing the dots from the ICD codes (if any)
+obs_raw <- as.data.frame( obs_raw )
+demo_raw <- as.data.frame( demo_raw )
+clinical_raw <- as.data.frame( clinical_raw )
+
+obs_raw_age <- left_join(obs_raw, demo_raw[c("patient_num", "age", "dead", "death_date")], by = c("patient_num")) %>%
+  dplyr::mutate( concept_code = gsub("\\.", "",concept_code )) %>%
+  dplyr::inner_join(clinical_raw[, c("patient_num", "days_since_admission", "calendar_date")], 
+            by = c("patient_num", "days_since_admission"))
+
+# estimate age at each diagnosis
+if( age_estimation_variability == FALSE ){
+  
+  obs_raw_age <- obs_raw_age %>%
+    dplyr::mutate( age_time_diagnosis = age - floor(as.numeric(as.Date(data_update_date, format = dateFormat) - as.Date(calendar_date, format = dateFormat)) / 365.25)) %>%
+    dplyr::select( -dead, -death_date )
+  
+}else if( age_estimation_variability == TRUE ){
+  
+  alive<- obs_raw_age %>%
+    dplyr::filter( dead == 0 ) %>%
+    dplyr::mutate( age_time_diagnosis = age - floor(as.numeric(as.Date(data_update_date, format = dateFormat) - as.Date(calendar_date, format = dateFormat)) / 365.25 )) %>%
+    dplyr::select( -dead, -death_date )
+  
+  dead<- obs_raw_age %>%
+    dplyr::filter( dead == 1 ) %>%
+    dplyr::mutate( age_time_diagnosis = age - floor(as.numeric(as.Date(death_date, format = dateFormat) - as.Date(calendar_date, format = dateFormat)) / 365.25 )) %>%
+    dplyr::select( -dead, -death_date )
+ obs_raw_age <- rbind( alive, dead )
+}
+
+print('Patient age calculated')
+```
+
+## Applying inclusion criteria to filter and format the data
+
+We are selecting hospitalizations based on the following criteria:
+
+-   Associated with at least 1 ICD code
+
+-   With a duration of hospitalization spanning over at least one
+    consecutive days
+
+-   Starting on or after 2019/01/01
+
+-   Age at diagnosis < 18 y/o
+
+```{r}
+obs_filtered_inclusion_criteria <- obs_raw_age %>% 
+  dplyr::filter(concept_type == 'DIAG-ICD10',
+                days_since_admission >= 0, 
+                age_time_diagnosis < 18 )
+```
+
+## Select the disorders of interest based on the ICD code
+```{r}
+obs_disease_interest <- obs_filtered_inclusion_criteria %>%
+  dplyr::mutate( threeDigitCode = substr( concept_code, 1, 3)) %>%
+  dplyr::filter( threeDigitCode %in% icdCodes$ICD10_Code ) 
+```
+
+## Estimate the length of the hospitalization
+```{r}
+source("../R/count_sequences_hospitalisation.R")
+
+clinical_raw_doi <- clinical_raw %>%
+  dplyr::filter( patient_num %in% obs_disease_interest$patient_num )
+
+clinical_raw_doi <- count_hosp(clinical_raw_doi) %>%
+  dplyr::ungroup() %>%
+  dplyr::select( patient_num, days_since_admission, n_hospitalization, length_hospitalization, admit_date )
+
+```
+
+## Hospitalizations per month and disease subtype to plot 
+```{r}
+toPlot_formated <- obs_disease_interest %>%
+  dplyr::left_join( clinical_raw_doi, by=c("patient_num", "days_since_admission")) %>%
+  dplyr::mutate( time_p = as.Date(cut( as.Date(admit_date), breaks = "months"))) %>%
+  dplyr::filter( as.Date(time_p) >= ymd(start_date_plots),
+                 as.Date(time_p) <= ymd(end_date_plots)) %>%
+  dplyr::left_join( icdCodes, by=c("threeDigitCode"="ICD10_Code"))
+  
+toPlot_counts <- toPlot_formated %>%
+  dplyr::mutate( pat_hosp = paste0( patient_num, "-", n_hospitalization )) %>%
+  dplyr::group_by( time_p, description ) %>%
+  #dplyr::summarise( n = n_distinct( pat_hosp )) %>%
+  dplyr::summarise( n = ifelse(n_distinct(pat_hosp) > obfuscation | isFALSE(obfuscation),
+                               n_distinct(pat_hosp), 
+                               0.5))
+```
+
+## Plot cases per month
+```{r}
+ggplot2::ggplot(data=toPlot_counts, aes(x=time_p, y=n), group = description) +
+  ggplot2::facet_wrap( ~ description, scales = "free" ) + 
+  ggplot2::geom_line( color = "orange") +
+  ggplot2::scale_x_date(date_labels="%b-%y",date_breaks  ="3 month")+
+  ggplot2::labs(y = "Number of patients",
+                x = "Date (by month)",
+                title = "Number of monthly hospitazations with Kawasaki disease") +
+  ggplot2::theme_bw() +
+  ggplot2::theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+```
+
+## Create table 1
+```{r}
+demog_table <- toPlot_formated %>%
+  dplyr::left_join( demo_raw %>% dplyr::select( patient_num, sex ), by = "patient_num" ) %>%
+  dplyr::select( patient_num, sex, age_time_diagnosis, length_hospitalization,n_hospitalization, description ) %>%
+  unique()
+```
+
+```{r}
+age <- demog_table %>%
+  dplyr::mutate( age_time_diagnosis = ifelse( age_time_diagnosis == -1, 0, age_time_diagnosis )) %>%
+  dplyr::mutate( pat_hosp = paste0( patient_num, "-", n_hospitalization )) %>%
+  dplyr::summarise( mean = mean( age_time_diagnosis ),
+                    sd = sd( age_time_diagnosis ),
+                    count = n_distinct(pat_hosp)) %>%
+  dplyr::mutate( count = ifelse( count > obfuscation, count, obfuscation * 0.5))
+```
+
+```{r}
+sex <- demog_table %>%
+  dplyr::mutate( hospitalization_id = paste0( patient_num, "-", n_hospitalization )) %>%
+  dplyr::distinct(hospitalization_id, sex) %>% 
+  dplyr::group_by( sex ) %>%
+  dplyr::summarise( count = n_distinct(hospitalization_id) ) %>%
+  dplyr::mutate( count = ifelse( count > obfuscation, count, obfuscation * 0.5),
+                 total = sum( count ), percentage = round( count/total*100, 2)  )
+```
+
+```{r}
+hosp_length <- demog_table %>%
+  dplyr::mutate( pat_hosp = paste0( patient_num, "-", n_hospitalization )) %>%
+  dplyr::summarise( mean = mean( length_hospitalization ),
+                    sd = sd( length_hospitalization ),
+                    count = n_distinct(pat_hosp)) %>%
+  dplyr::mutate( count = ifelse( count > obfuscation, count, obfuscation * 0.5))
+```
+
+```{r}
+condition <- demog_table %>%
+  dplyr::mutate( hospitalization_id = paste0( patient_num, "-", n_hospitalization )) %>%
+  dplyr::distinct(hospitalization_id, description) %>% 
+  dplyr::group_by( description ) %>%
+  dplyr::summarise( count = n_distinct(hospitalization_id) ) %>%
+  dplyr::mutate( count = ifelse( count > obfuscation, count, obfuscation * 0.5),
+                 total = sum( count ), percentage = round( count/total*100, 2)  )
+```
+
+
+```{r}
+format_counts <- function(count, percentage) {
+  glue::glue("{count} ({percentage} %)", count = count, percentage = percentage)
+}
+
+age_table1 <- age %>% 
+  mutate(result = glue::glue("{mean} (sd: {sd})", mean = round(mean, 2), sd = round(sd, 2))) %>% 
+  select(result) %>% 
+  mutate(name = "Age")
+
+sex_table1 <- sex %>%
+  mutate(result = format_counts(count, percentage)) %>%
+  select(-c(count, percentage)) %>%
+  rename(name = sex)
+
+hosp_length_table1 <- hosp_length %>% 
+  mutate(result = glue::glue("{mean} (sd: {sd})", mean = round(mean, 2), sd = round(sd, 2))) %>% 
+  select(result) %>% 
+  mutate(name = "Length of Hospitalization")
+
+condition_table1 <- condition %>%
+  mutate(result = format_counts(count, percentage)) %>%
+  select(-c(count, percentage))
+
+list_table1 <- list(
+  "Sex" = sex_table1,
+  "Age" = age_table1,
+  "Length of Hospitalization" = hosp_length_table1, 
+  "AD subgroup" = condition_table1)
+
+
+table1 <- list_table1 %>%
+  lapply(function(df) mutate(df, across(.fns = as.character))) 
+
+table1
+```
+
+
+```{r, eval=FALSE}
+table1(~ sex + age_time_diagnosis +  length_hospitalization, 
+       data = demog_table, caption = "Table 1. Kawasaki Disease Hospitalizations")
+```
+
