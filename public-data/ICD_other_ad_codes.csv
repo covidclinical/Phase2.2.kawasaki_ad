@@ -1,0 +1,23 @@
+ICD10_Code,description
+M08,JIA
+M08.4,Oligoarticular JIA
+M08.3,Polyarticular JIA
+M08.2,Systemic JIA
+D76.1,Macrophage Activation Syndrome
+L40.54,Psoriatic Arthritis
+H20.9,Uveitis (unspecified)
+E85.0,Periodic Fever Syndrome
+M33.02,JDMS with myopathy
+M32.14,SLE with glomerular disease
+M32.9,SLE
+M31.30,GPA without renal involvement
+M31.31,GPA with renal involvement
+M31.4,Takayasu Arteritis
+E85.0,FMF 
+M86.30,CRMO
+R50.9,Fever Unspecified
+A68.9,Relapsing Fever
+M04.1,Periodic Fever
+M35.7,Hypermobility Syndrome
+I73.00,Raynaud’s Syndrome
+D69.0,HSP
