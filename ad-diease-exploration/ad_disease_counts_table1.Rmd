@@ -233,7 +233,7 @@ ggplot2::ggplot(data=toPlot_counts, aes(x=time_p, y=n), group = description) +
   ggplot2::facet_wrap( ~ description, scales = "free" ) + 
   ggplot2::geom_line( color = "orange") +
   ggplot2::scale_x_date(date_labels="%b-%y",date_breaks  ="3 month")+
-  ggplot2::labs(y = "Number of patients",
+  ggplot2::labs(y = "Number of hospitalizations",
                 x = "Date (by month)",
                 title = "Number of monthly hospitazations") +
   ggplot2::theme_bw() +

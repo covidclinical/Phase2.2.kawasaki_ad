@@ -232,6 +232,15 @@ toPlot_counts <- toPlot_formated %>%
 
 ## Plot cases per month
 ```{r}
+# select diseases with 15 or more hospitalizations in the whole period
+hospitalizationsPerCondition <- toPlot_counts %>%
+  dplyr::group_by( description ) %>%
+  dplyr::summarise( hsp = n()) %>%
+  dplyr::filter( hsp > 15 )
+
+toPlot_counts <- toPlot_counts %>%
+  dplyr::filter( description %in% hospitalizationsPerCondition$description )
+
 ggplot2::ggplot(data=toPlot_counts, aes(x=time_p, y=n), group = description) +
   ggplot2::facet_wrap( ~ description, scales = "free" ) + 
   ggplot2::geom_line( color = "orange") +
@@ -329,9 +338,4 @@ table1 <- list_table1 %>%
 table1
 ```
 
-
-```{r, eval=FALSE}
-table1(~ sex + age_time_diagnosis +  length_hospitalization, 
-       data = demog_table, caption = "Table 1. Kawasaki Disease Hospitalizations")
-```
 
